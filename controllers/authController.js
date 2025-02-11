@@ -1,104 +1,96 @@
-// src/components/Authentication/LoginPage.jsx
+import bcrypt from 'bcrypt';
+import jwt from 'jsonwebtoken';
+import db from '../utils/db.js';
 
-import React, { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
-import axios from 'axios';
-import hotelImage from '../Assets/Hotel_Background.jpg';  // Your image path
-
-const LoginPage = () => {
-  const [username, setUsername] = useState('');
-  const [password, setPassword] = useState('');
-  const [error, setError] = useState('');
-  const navigate = useNavigate();
-
-  const handleLogin = async (e) => {
-    e.preventDefault();
-
-    // Basic validation
-    if (username === '' || password === '') {
-      setError('Please enter both username and password.');
-      return;
-    }
-
-    try {
-      // API call to login
-      const response = await axios.post('http://localhost:5000/auth/login', {
-        username,
-        password,
-      });
-
-      // Check if the response is successful
-      if (response.status === 200) {
-        const { token, user } = response.data;
-        
-        // Save the JWT token and user details to localStorage
-        localStorage.setItem('token', token);
-        localStorage.setItem('user', JSON.stringify(user));
-
-        // Redirect to dashboard
-        navigate('/admin-dashboard');
-      }
-    } catch (err) {
-      // Handle errors
-      setError(err.response?.data?.message || 'An error occurred. Please try again.');
-    }
-  };
-
-  return (
-    <div className="relative w-full h-screen bg-cover bg-center" style={{ backgroundImage: `url(${hotelImage})` }}>
-      {/* Overlay to darken the background */}
-      <div className="absolute inset-0 bg-black opacity-60"></div>
-
-      {/* Right Side - Form */}
-      <div className="absolute inset-0 flex items-center justify-center">
-        <div className="w-full max-w-md p-10 bg-black bg-opacity-50 shadow-xl backdrop-blur-sm rounded-xl border-4 border-gray-700">
-          <h2 className="text-3xl font-semibold text-center mb-6 text-white">Login</h2>
-          <form onSubmit={handleLogin} className="space-y-6">
-            {/* Username Field */}
-            <div>
-              <label htmlFor="username" className="block text-sm font-medium text-white">
-                Username
-              </label>
-              <input
-                type="text"
-                id="username"
-                value={username}
-                onChange={(e) => setUsername(e.target.value)}
-                className="w-full px-4 py-3 border border-white rounded-lg focus:outline-none focus:ring focus:ring-blue-400 bg-gray-700 text-white"
-                placeholder="Enter your username"
-              />
-            </div>
-
-            {/* Password Field */}
-            <div>
-              <label htmlFor="password" className="block text-sm font-medium text-white">
-                Password
-              </label>
-              <input
-                type="password"
-                id="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                className="w-full px-4 py-3 border border-white rounded-lg focus:outline-none focus:ring focus:ring-blue-400 bg-gray-700 text-white"
-                placeholder="Enter your password"
-              />
-            </div>
-
-            {/* Error Message */}
-            {error && <p className="text-red-500 text-center mb-4">{error}</p>}
-
-            {/* Login Button */}
-            <button
-              type="submit"
-              className="w-full py-3 border-2 border-white text-white font-semibold rounded-lg hover:bg-gray-700 focus:outline-none focus:ring focus:ring-blue-300"
-            >
-              Login
-            </button>
-          </form>
-        </div>
-      </div>
-    </div>
-  );
+export const test = (req, res) => {
+  console.log('Hello from test function');
+  res.send('Hello from test function');  // Send response to the client
 };
 
-export default LoginPage;
+
+export const login = async (req, res) => {
+  const { username, password } = req.body;
+
+  if (!username || !password) {
+    return res.status(400).json({ message: 'Please enter both username and password.' });
+  }
+
+  try {
+    const [rows] = await db.execute('SELECT * FROM users WHERE email = ?', [username]);
+
+    if (rows.length === 0) {
+      return res.status(401).json({ message: 'Invalid username or password.' });
+    }
+
+    const admin = rows[0];
+    const passwordMatch = await bcrypt.compare(password, admin.password_hash);
+
+    if (!passwordMatch) {
+      return res.status(401).json({ message: 'Invalid password.' });
+    }
+
+    const token = jwt.sign(
+      { id: admin.id, username: admin.username, role: admin.role },
+      process.env.JWT_SECRET,
+      { expiresIn: process.env.JWT_EXPIRATION }
+    );
+
+    return res.status(200).json({
+      message: 'Login successful',
+      token,
+    });
+
+  } catch (error) {
+    console.error('Login Error:', error);
+    return res.status(500).json({ message: 'Server error. Please try again later.' });
+  }
+};
+
+export const register = async (req, res) => {
+  try {
+    const { username, email, password, role } = req.body;
+
+    // Validate input fields
+    if (!username || !email || !password) {
+      return res.status(400).json({ message: 'All fields are required.' });
+    }
+
+    // Check if user already exists
+    const [existingUser] = await db.execute('SELECT * FROM users WHERE email = ?', [email]);
+    if (existingUser.length > 0) {
+      return res.status(400).json({ message: 'User already exists.' });
+    }
+
+    // Hash password
+    const salt = await bcrypt.genSalt(10);
+    const hashedPassword = await bcrypt.hash(password, salt);
+
+    // Insert new user into the database
+    await db.execute(
+      'INSERT INTO users (username, email, password_hash, role) VALUES (?, ?, ?, ?)',
+      [username, email, hashedPassword, role || 'user']
+    );
+
+    // Retrieve the newly created user
+    const [newUser] = await db.execute('SELECT * FROM users WHERE email = ?', [email]);
+    const user = newUser[0];
+
+    // Generate JWT token
+    const token = jwt.sign(
+      { id: user.id, username: user.username, role: user.role },
+      process.env.JWT_SECRET,
+      { expiresIn: process.env.JWT_EXPIRATION || '1h' }
+    );
+
+    return res.status(201).json({
+      message: 'User registered successfully',
+      token,
+      user: { id: user.id, username: user.username, email: user.email, role: user.role },
+    });
+
+  } catch (error) {
+    console.error('Register Error:', error);
+    return res.status(500).json({ message: 'Server error. Please try again later.' });
+  }
+};
+
