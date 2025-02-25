@@ -1,22 +1,20 @@
 import express from 'express';
+import cors from 'cors'; // Import CORS
 import dotenv from 'dotenv';
-import bodyParser from 'body-parser';
-import cors from 'cors';
-import authRoutes from './routes/authRoute.js';  // Import auth routes
+import authRoutes from './routes/auth.js';
+import { authenticateJWT, authorizeRoles } from './middleware/auth.js';
 
-dotenv.config();  // Load environment variables from .env
+dotenv.config();
 
 const app = express();
-const PORT = process.env.PORT || 5000;
+app.use(cors()); // Enable CORS
+app.use(express.json());
 
-// Middlewares
-app.use(cors());  // Allow cross-origin requests
-app.use(bodyParser.json());  // Parse incoming JSON requests
+app.use('/auth', authRoutes);
 
-// Register routes
-app.use('/auth', authRoutes);  // All auth routes will be prefixed with /auth
-
-// Start server
-app.listen(PORT, () => {
-  console.log(`Server running on http://localhost:${PORT}`);
+app.get('/admin', authenticateJWT, authorizeRoles(['Admin']), (req, res) => {
+  res.json({ message: 'Welcome, Admin!' });
 });
+
+const PORT = process.env.PORT || 5000;
+app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
